@@ -5,7 +5,7 @@
 Buddy to niewielkie urządzenie z Seeed Studio XIAO ESP32-C5, ekranem ST7789
 240 × 240 i czterema przyciskami kierunkowymi. Firmware jest natywnym projektem
 ESP-IDF, bez Arduino. Zawiera ekran startowy z napisem **BUDDY**, menu, trzy
-testy wyświetlacza, monitor przycisków i status systemu.
+testy wyświetlacza, monitor przycisków, status systemu i ekran XYZ.
 
 ## Połączenia
 
@@ -47,6 +47,7 @@ GPIO9 / D9 pozostaje wolny; brzęczyk nie jest podłączony.
 | Display | — | Wróć do menu | Następny test |
 | Buttons | Test naciśnięcia | Test; przytrzymaj 650 ms, by wrócić | Test; przytrzymaj 650 ms, by otworzyć status |
 | System | — | Wróć do menu | Odśwież status |
+| XYZ | — | Wróć do menu | — |
 | Refresh | — | Anuluj | — |
 
 Drgania styków są filtrowane przez 30 ms. Naciśnięcie `RIGHT`, którym otwarto
@@ -72,6 +73,9 @@ generowany lokalnie i pomijany przez Git.
 Kod interfejsu i obsługi przycisków jest w `main/buddy.cpp`, mapa pinów w
 `main/buddy_board.h`, a sterownik ST7789 w `main/buddy_display.cpp`. Czcionka
 5 × 7 używa danych z Adafruit GFX na licencji BSD (`main/font.LICENSE`).
+Ekran XYZ pokazuje napis `ACTIVE`. Funkcja `runXyz()` w `main/buddy.cpp` jest
+pustym miejscem na logikę modułu i uruchamia się w każdej iteracji pętli,
+gdy ekran XYZ jest otwarty.
 
 Build został zweryfikowany lokalnie. Wygląd ekranu i reakcja fizycznych
 przycisków wymagają sprawdzenia na podłączonym urządzeniu.

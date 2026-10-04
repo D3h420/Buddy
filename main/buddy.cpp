@@ -84,6 +84,7 @@ constexpr MenuItem MENU_ITEMS[] = {
     {"DISPLAY", "PIXEL + MOTION", ICON_DISPLAY},
     {"BUTTONS", "INPUT MONITOR", ICON_INPUT},
     {"SYSTEM", "DEVICE STATUS", ICON_SYSTEM},
+    {"XYZ", "CUSTOM MODE", ICON_XYZ},
 };
 constexpr uint8_t MENU_ITEM_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 
@@ -329,21 +330,29 @@ void drawSystemIcon(int16_t x, int16_t y, uint16_t color) {
   }
 }
 
+void drawXyzIcon(int16_t x, int16_t y, uint16_t color) {
+  tft.drawRect(x, y, 20, 20, color);
+  tft.drawLine(x + 5, y + 5, x + 14, y + 14, color);
+  tft.drawLine(x + 14, y + 5, x + 5, y + 14, color);
+}
+
 void drawMenuIcon(MenuIcon icon, int16_t x, int16_t y, uint16_t color) {
   if (icon == ICON_DISPLAY) {
     drawDisplayIcon(x, y, color);
   } else if (icon == ICON_INPUT) {
     drawInputIcon(x, y, color);
-  } else {
+  } else if (icon == ICON_SYSTEM) {
     drawSystemIcon(x, y, color);
+  } else {
+    drawXyzIcon(x, y, color);
   }
 }
 
 void drawMenuCard(uint8_t index) {
   const int16_t x = 10;
-  const int16_t y = 47 + index * 49;
+  const int16_t y = 43 + index * 41;
   const int16_t width = 220;
-  const int16_t height = 43;
+  const int16_t height = 39;
   const bool selected = index == selectedItem;
   const uint16_t fill = selected ? COLOR_MAGENTA : COLOR_SURFACE;
   const uint16_t border = selected ? COLOR_PINK : COLOR_GRID;
@@ -356,30 +365,29 @@ void drawMenuCard(uint8_t index) {
 
   char ordinal[4];
   snprintf(ordinal, sizeof(ordinal), "%02u", index + 1);
-  drawCenteredText(ordinal, 25, y + 18, 1, secondary);
-  drawMenuIcon(MENU_ITEMS[index].icon, 40, y + 11, primary);
+  drawCenteredText(ordinal, 25, y + 16, 1, secondary);
+  drawMenuIcon(MENU_ITEMS[index].icon, 40, y + 9, primary);
 
   tft.setTextSize(2);
   tft.setTextColor(primary);
-  tft.setCursor(68, y + 5);
+  tft.setCursor(68, y + 3);
   tft.print(MENU_ITEMS[index].title);
   tft.setTextSize(1);
   tft.setTextColor(secondary);
-  tft.setCursor(69, y + 27);
+  tft.setCursor(69, y + 23);
   tft.print(MENU_ITEMS[index].subtitle);
 
-  tft.drawLine(214, y + 17, 220, y + 21, primary);
-  tft.drawLine(220, y + 21, 214, y + 25, primary);
-  if (selected) tft.fillRect(224, y + 8, 2, 27, COLOR_PINK);
+  tft.drawLine(214, y + 14, 220, y + 18, primary);
+  tft.drawLine(220, y + 18, 214, y + 22, primary);
+  if (selected) tft.fillRect(224, y + 6, 2, 27, COLOR_PINK);
 }
 
 void drawMenuStatus() {
-  tft.fillRect(0, 194, SCREEN_W, 19, COLOR_BG);
-  char status[24];
-  snprintf(status, sizeof(status), "MODULE %02u / %02u", selectedItem + 1,
-           MENU_ITEM_COUNT);
-  drawCenteredText(status, 120, 200, 1, COLOR_MUTED);
-  tft.fillRect(78 + selectedItem * 30, 210, 24, 2, COLOR_MAGENTA);
+  tft.fillRect(0, 207, SCREEN_W, 6, COLOR_BG);
+  for (uint8_t index = 0; index < MENU_ITEM_COUNT; ++index) {
+    tft.fillRect(85 + index * 18, 209, 12, 2,
+                 index == selectedItem ? COLOR_MAGENTA : COLOR_SURFACE_2);
+  }
 }
 
 void drawMenu() {
@@ -398,10 +406,10 @@ void updateMenuFocus() {
   if (currentPage != MENU || millis() - menuFocusUpdatedAt < 420) return;
   menuFocusUpdatedAt = millis();
   menuFocusBright = !menuFocusBright;
-  const int16_t y = 47 + selectedItem * 49;
+  const int16_t y = 43 + selectedItem * 41;
   const uint16_t color = menuFocusBright ? COLOR_INK : COLOR_PINK;
-  tft.drawLine(214, y + 17, 220, y + 21, color);
-  tft.drawLine(220, y + 21, 214, y + 25, color);
+  tft.drawLine(214, y + 14, 220, y + 18, color);
+  tft.drawLine(220, y + 18, 214, y + 22, color);
 }
 
 // -----------------------------------------------------------------------------
@@ -813,6 +821,25 @@ void updateSystemUptime() {
 }
 
 // -----------------------------------------------------------------------------
+// XYZ module.
+// -----------------------------------------------------------------------------
+
+void drawXyzScreen() {
+  tft.fillScreen(COLOR_BG);
+  drawHeader("XYZ", "CUSTOM MODE", "LIVE");
+  fillChamferedRect(20, 69, 200, 126, 8, COLOR_SURFACE);
+  drawChamferedRect(20, 69, 200, 126, 8, COLOR_GRID);
+  drawCenteredText("ACTIVE", 120, 110, 3, COLOR_CYAN);
+  drawCenteredText("XYZ MODULE", 120, 157, 1, COLOR_MUTED);
+  drawFooter("<", "BACK", "", "");
+}
+
+void runXyz() {
+  if (currentPage != XYZ_SCREEN) return;
+  // TODO: implement XYZ behavior here. Called on every loop while active.
+}
+
+// -----------------------------------------------------------------------------
 // Navigation and input.
 // -----------------------------------------------------------------------------
 
@@ -834,9 +861,12 @@ void openSelectedPage() {
     drawDisplayTest();
   } else if (selectedItem == 1) {
     startButtonTest();
-  } else {
+  } else if (selectedItem == 2) {
     currentPage = SYSTEM_TEST;
     drawSystemTest();
+  } else {
+    currentPage = XYZ_SCREEN;
+    drawXyzScreen();
   }
 }
 
@@ -917,6 +947,14 @@ void handlePress(Direction direction) {
       startSelfTest();
     } else {
       drawSystemInputRow();
+    }
+    return;
+  }
+
+  if (currentPage == XYZ_SCREEN) {
+    if (direction == LEFT) {
+      currentPage = MENU;
+      drawMenu();
     }
     return;
   }
@@ -1077,6 +1115,7 @@ void loop() {
   updateMotionTest();
   updateSystemUptime();
   updateSelfTest();
+  runXyz();
   delay(2);
 }
 
