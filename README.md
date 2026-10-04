@@ -153,5 +153,8 @@ battery, check for a short between `3V3` and `GND` with a multimeter.
 
 ## Enclosure files
 
-<img width="401" height="537" alt="Buddy enclosure" src="https://github.com/user-attachments/assets/70e00686-5db9-47f7-99d9-fc7b45777f95" />
-### [📦 Download enclosure files on MakerWorld](https://makerworld.com/pl/models/3354005-buddy-seeed-studio-xiao-esp32-c5-1-54-tft#profileId-3812397)
+<img width="401" alt="Buddy enclosure" src="https://github.com/user-attachments/assets/70e00686-5db9-47f7-99d9-fc7b45777f95">
+
+<br>
+
+[📦 **Download enclosure files on MakerWorld**](https://makerworld.com/pl/models/3354005-buddy-seeed-studio-xiao-esp32-c5-1-54-tft#profileId-3812397)
