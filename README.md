@@ -5,17 +5,6 @@ a 1.54-inch 240 x 240 ST7789 TFT, and four tactile direction buttons. The
 current revision is powered over USB-C. A protected 1-cell Li-Po battery and an
 on/off switch may be added later.
 
-The current Arduino firmware is located at
-[`BuddyHardwareTest/BuddyHardwareTest.ino`](./BuddyHardwareTest/BuddyHardwareTest.ino).
-It combines the verified hardware diagnostics with a complete retro-anime
-interface: an interactive attract screen, a magenta-focused main menu, display
-tests, a live four-button monitor, system status, and a non-blocking status
-refresh.
-Printable enclosure files are stored in [`STL/`](./STL/).
-Current screen captures are in
-[`BuddyHardwareTest/previews/`](./BuddyHardwareTest/previews/). The original
-test sketch is preserved in `BuddyHardwareTest/legacy/` and is not compiled.
-
 ## Verified display wiring
 
 The labels `SCL` and `SDA` on this TFT module are SPI signals, not I2C.
@@ -102,12 +91,6 @@ The system refresh is a non-blocking status sequence for the configured display
 link, input matrix, and embedded UI asset. It does not electrically probe the
 display because this write-only SPI wiring has no MISO connection.
 
-Render all screens and run the host navigation checks on macOS:
-
-```bash
-sh BuddyHardwareTest/tools/preview.sh
-```
-
 ## Pin allocation
 
 | XIAO pin | Current use |
@@ -152,33 +135,6 @@ arduino-cli compile --upload \
   BuddyHardwareTest
 ```
 
-## Boot artwork pipeline
-
-The original generated artwork and the exact 240 x 240 preview are in
-[`BuddyHardwareTest/assets/`](./BuddyHardwareTest/assets/). The firmware embeds
-the image as a 59-entry RGB565 palette plus run-length encoded pixel data in
-`BuddyBootAsset.h`; the converter starts from a 64-color quantization target,
-then merges colors that are identical on the display. Decoding uses only a
-single 240-pixel scanline buffer.
-
-The converter uses only the Python standard library. On macOS, rebuild the
-header with:
-
-```bash
-sips -z 240 240 BuddyHardwareTest/assets/buddy_boot_source.png \
-  --out /tmp/buddy_boot_240.png
-sips -s format bmp /tmp/buddy_boot_240.png \
-  --out /tmp/buddy_boot_240.bmp
-python3 BuddyHardwareTest/tools/image_to_palette.py \
-  /tmp/buddy_boot_240.bmp BuddyHardwareTest/BuddyBootAsset.h \
-  --preview /tmp/buddy_boot_quantized.ppm --colors 64
-sips -s format png /tmp/buddy_boot_quantized.ppm \
-  --out BuddyHardwareTest/assets/buddy_boot_240.png
-```
-
-The generation brief and asset provenance are documented in
-[`BuddyHardwareTest/assets/README.md`](./BuddyHardwareTest/assets/README.md).
-
 ## Future battery connection
 
 Use only a protected 1-cell Li-Po/Li-ion battery: 3.7 V nominal and 4.2 V fully
@@ -194,30 +150,3 @@ battery, check for a short between `3V3` and `GND` with a multimeter.
 
 ## Enclosure files
 
-The final print-ready revision 2.19 meshes exported directly from the current
-manually rounded Fusion model are in `STL/`: `Base.stl`, `Lid_fixed.stl`,
-`Buttons_Standard.stl`, and `Lanyard_Handle.stl`. Each file contains exactly
-one watertight solid. The rejected low button variant has been removed.
-`Buttons_Standard.stl` now has a thin raised direction chevron on every cap:
-up, down, left, and right. Each symbol uses only two rounded lines rather than
-a filled arrow. The enlarged lines are approximately 1.10 mm wide, rise 0.40 mm
-above the restored flat cap surface and cover almost the entire button face. In this revision, the USB-C opening is vertically aligned
-with the on/off switch opening: both centre lines are at `Z = 10.20 mm`. The
-USB-C opening remains `12.00 x 5.00 mm` with R1.00 corners, and the corrected
-on/off opening is `12.50 x 6.00 mm`. The locally rebuilt wall remains flush
-with the surrounding face and preserves the original R3.50 lower-edge fillet,
-without a raised rim or rectangular step. `Lid_fixed.stl` keeps the accepted
-2.50 mm of additional internal clearance while retaining the original
-openings, pockets and base-compatible snap geometry.
-
-`Lanyard_Handle.stl` is a separate `20 x 11 x 5 mm` glue-on or integration
-part with a 20 mm lower base, 7.5 mm upper edge, diagonal right shoulder and a
-manually rounded through-hole.
-
-The `cad/` directory contains the editable Fusion archive, STEP export, and
-four separate STL files: the base, full-perimeter snap-fit front lid,
-one-piece four-button insert with directional chevrons, and lanyard handle. It also contains the current
-Fusion viewport and the
-preceding revision's photorealistic and blueprint concept previews. The source
-generator is
-[`FusionCaseGenerator/FusionCaseGenerator.py`](./FusionCaseGenerator/FusionCaseGenerator.py).
