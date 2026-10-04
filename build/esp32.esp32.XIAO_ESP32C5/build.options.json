@@ -1,0 +1,9 @@
+{
+  "additionalFiles": "../..,../..,../../..,../../..,../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..,../../../..",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "",
+  "fqbn": "esp32:esp32:XIAO_ESP32C5",
+  "hardwareFolders": "/Users/dominikhrycaj/Library/Arduino15/packages/esp32/hardware/esp32/3.3.10,/Users/dominikhrycaj/Library/Arduino15/packages/esp32/hardware/esp32/3.3.10",
+  "otherLibrariesFolders": "/Users/dominikhrycaj/Documents/Arduino/libraries",
+  "sketchLocation": "/Users/dominikhrycaj/Desktop/Buddy/BuddyHardwareTest"
+}
