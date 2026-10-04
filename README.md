@@ -1,6 +1,8 @@
 # Buddy
-<img width="1536" height="1024" alt="buddy_chrome" src="https://github.com/user-attachments/assets/a18e5d0c-eec3-4ff3-9fd1-9f487c830203" />
-
+<img src="https://github.com/user-attachments/assets/a18e5d0c-eec3-4ff3-9fd1-9f487c830203"
+     alt="Buddy"
+     width="400">
+     
 Buddy is a compact handheld device built around a Seeed Studio XIAO ESP32-C5,
 a 1.54-inch 240 x 240 ST7789 TFT, and four tactile direction buttons. The
 current revision is powered over USB-C. A protected 1-cell Li-Po battery and an
