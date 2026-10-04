@@ -1,4 +1,5 @@
-# Buddy handheld
+# Buddy
+<img width="1536" height="1024" alt="buddy_chrome" src="https://github.com/user-attachments/assets/a18e5d0c-eec3-4ff3-9fd1-9f487c830203" />
 
 Buddy is a compact handheld device built around a Seeed Studio XIAO ESP32-C5,
 a 1.54-inch 240 x 240 ST7789 TFT, and four tactile direction buttons. The
@@ -149,4 +150,5 @@ Do not connect the battery to `3V3` or `5V/VBUS`. Before connecting USB or a
 battery, check for a short between `3V3` and `GND` with a multimeter.
 
 ## Enclosure files
-
+<img width="401" height="537" alt="Zrzut ekranu 2026-10-4 o 16 39 13" src="https://github.com/user-attachments/assets/70e00686-5db9-47f7-99d9-fc7b45777f95" />
+https://makerworld.com/pl/models/3354005-buddy-seeed-studio-xiao-esp32-c5-1-54-tft#profileId-3812397
