@@ -1,84 +1,84 @@
 # Buddy — ESP-IDF
 
-![Logo Buddy](buddy_chrome.png)
+![Buddy logo](buddy_chrome.png)
 
-Buddy to niewielkie urządzenie z Seeed Studio XIAO ESP32-C5, ekranem ST7789
-240 × 240 i czterema przyciskami kierunkowymi. Firmware jest natywnym projektem
-ESP-IDF, bez Arduino. Zawiera ekran startowy z napisem **BUDDY**, menu, trzy
-testy wyświetlacza, monitor przycisków, status systemu i Lab Tester.
+Buddy is a small device built around a Seeed Studio XIAO ESP32-C5, a 240 × 240
+ST7789 display, and four directional buttons. The firmware is a native ESP-IDF
+project without Arduino. It includes a **BUDDY** splash screen, a menu, three
+display tests, a button monitor, system status, and Lab Tester.
 
-## Połączenia
+## Wiring
 
-Oznaczenia `SCL` i `SDA` na module wyświetlacza to linie SPI, nie I²C. Ekran
-jest jedynym urządzeniem na magistrali, a jego `CS` jest połączony z GND.
+The display module's `SCL` and `SDA` labels refer to SPI signals, not I²C. The
+display is the only device on the bus, and its `CS` pin is connected to GND.
 
-| ST7789 | XIAO ESP32-C5 | GPIO | Funkcja |
+| ST7789 | XIAO ESP32-C5 | GPIO | Function |
 |---|---|---:|---|
-| GND | GND | — | Masa |
-| VCC | 3V3 | — | Zasilanie |
+| GND | GND | — | Ground |
+| VCC | 3V3 | — | Power |
 | SCL | D8 | 8 | SPI SCK |
 | SDA | D10 | 10 | SPI MOSI |
 | RST | D2 | 25 | Reset |
-| DC | D6 | 11 | Dane / komenda |
-| CS | GND | — | Stale aktywny |
-| BL | D7 | 12 | Podświetlenie, aktywne HIGH |
+| DC | D6 | 11 | Data / command |
+| CS | GND | — | Always active |
+| BL | D7 | 12 | Backlight, active HIGH |
 
-Ekran pracuje w trybie **SPI MODE3, 4 MHz, RGB565, obrót 180°**. Firmware
-rysuje bezpośrednio przez SPI, bez bufora całego ekranu.
+The display uses **SPI MODE3, 4 MHz, RGB565, and 180° rotation**. The firmware
+draws directly over SPI without a full-screen framebuffer.
 
-Każdy przycisk łączy GPIO z GND. Włączone jest wewnętrzne podciąganie, więc
-stan LOW oznacza naciśnięcie.
+Each button connects its GPIO pin to GND. Internal pull-ups are enabled, so LOW
+means the button is pressed.
 
-| Kierunek | XIAO | GPIO |
+| Direction | XIAO | GPIO |
 |---|---|---:|
 | UP | D0 | 1 |
 | DOWN | D5 | 24 |
 | LEFT / BACK | D1 | 0 |
 | RIGHT / ENTER | D4 | 23 |
 
-GPIO9 / D9 pozostaje wolny; brzęczyk nie jest podłączony.
+GPIO9 / D9 remains free; no buzzer is connected.
 
-## Sterowanie
+## Controls
 
-| Ekran | UP / DOWN | LEFT | RIGHT |
+| Screen | UP / DOWN | LEFT | RIGHT |
 |---|---|---|---|
-| Start | Otwórz menu | Otwórz menu | Otwórz menu |
-| Menu | Zmień pozycję | — | Otwórz pozycję |
-| Display | — | Wróć do menu | Następny test |
-| Buttons | Test naciśnięcia | Test; przytrzymaj 650 ms, by wrócić | Test; przytrzymaj 650 ms, by otworzyć status |
-| System | — | Wróć do menu | Odśwież status |
-| Lab Tester | — | Przytrzymaj 650 ms, by zatrzymać i wrócić do menu | — |
-| Refresh | — | Anuluj | — |
+| Splash | Open menu | Open menu | Open menu |
+| Menu | Change selection | — | Open selection |
+| Display | — | Return to menu | Next test |
+| Buttons | Test press | Test press; hold for 650 ms to return | Test press; hold for 650 ms to open status |
+| System | — | Return to menu | Refresh status |
+| Lab Tester | — | Hold for 650 ms to stop and return to menu | — |
+| Refresh | — | Cancel | — |
 
-Drgania styków są filtrowane przez 30 ms. Naciśnięcie `RIGHT`, którym otwarto
-monitor przycisków, nie jest liczone do nowej sesji. Odświeżanie statusu
-sprawdza konfigurację ekranu, stany przycisków i czcionkę. Połączenie SPI nie
-ma linii MISO, więc status nie jest elektrycznym testem wyświetlacza.
+Button presses are debounced for 30 ms. The `RIGHT` press used to open the button
+monitor is not counted in the new session. Status refresh checks the display
+configuration, button states, and font. The SPI connection has no MISO line, so
+the status screen does not electrically test the display.
 
-## Kompilacja i wgrywanie
+## Build and flash
 
-Projekt kompiluje się z **ESP-IDF 5.5.3** dla targetu `esp32c5`:
+The project builds with **ESP-IDF 5.5.3** for the `esp32c5` target:
 
 ```sh
-. /ścieżka/do/esp-idf/export.sh
+. /path/to/esp-idf/export.sh
 idf.py -DIDF_TARGET=esp32c5 build
 idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-Wybierz port właściwy dla podłączonej płytki. `sdkconfig.defaults` ustawia
-konsolę na USB Serial/JTAG, aby UART nie zajmował GPIO11 i GPIO12. Aplikacja
-po buildzie znajduje się w `build/buddy.bin`; cały katalog `build/` jest
-generowany lokalnie i pomijany przez Git.
+Choose the port for the connected board. `sdkconfig.defaults` routes the
+console to USB Serial/JTAG so UART does not occupy GPIO11 and GPIO12. The built
+application is `build/buddy.bin`; the entire `build/` directory is generated
+locally and ignored by Git.
 
-Kod interfejsu i obsługi przycisków jest w `main/buddy.cpp`, mapa pinów w
-`main/buddy_board.h`, a sterownik ST7789 w `main/buddy_display.cpp`. Czcionka
-5 × 7 używa danych z Adafruit GFX na licencji BSD (`main/font.LICENSE`).
-Lab Tester uruchamia moduł Blackout przez jego publiczny interfejs. Po
-przytrzymaniu LEFT zatrzymuje moduł i wraca do menu.
+The UI and button handling are in `main/buddy.cpp`, the pin map is in
+`main/buddy_board.h`, and the ST7789 driver is in `main/buddy_display.cpp`. The
+5 × 7 font uses Adafruit GFX data under the BSD license (`main/font.LICENSE`).
+Lab Tester starts the Blackout module through its public interface. Holding
+LEFT stops the module and returns to the menu.
 
-Build został zweryfikowany lokalnie. Wygląd ekranu i reakcja fizycznych
-przycisków wymagają sprawdzenia na podłączonym urządzeniu.
+The build has been verified locally. Display appearance and physical button
+behavior still require checking on the connected device.
 
-## Obudowa
+## Enclosure
 
-[Pliki obudowy na MakerWorld](https://makerworld.com/pl/models/3354005-buddy-seeed-studio-xiao-esp32-c5-1-54-tft#profileId-3812397).
+[Enclosure files on MakerWorld](https://makerworld.com/pl/models/3354005-buddy-seeed-studio-xiao-esp32-c5-1-54-tft#profileId-3812397).
