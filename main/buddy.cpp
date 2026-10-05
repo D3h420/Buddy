@@ -1142,9 +1142,14 @@ void setup() {
   ESP_LOGI(TAG, "Controls: UP/DOWN select, RIGHT enter, LEFT back");
   ESP_LOGI(TAG, "Buzzer: disabled / D9 untouched");
 
-  currentPage = SPLASH;
-  drawSplash();
-  armStartInput();
+  // Automatically start XYZ screen on boot instead of showing splash
+  ESP_LOGI(TAG, "Setting current page to XYZ_SCREEN");
+  currentPage = XYZ_SCREEN;
+  ESP_LOGI(TAG, "Drawing XYZ screen");
+  drawXyzScreen();
+  ESP_LOGI(TAG, "Calling xyzBegin");
+  xyzBegin();
+  ESP_LOGI(TAG, "xyzBegin called successfully");
   ESP_ERROR_CHECK(gpio_set_level(static_cast<gpio_num_t>(TFT_BL), 1));
 }
 
