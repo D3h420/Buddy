@@ -5,6 +5,7 @@
 #include "buddy_board.h"
 #include "buddy_display.h"
 #include "buddy_types.h"
+#include "buddy_xyz.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -836,7 +837,10 @@ void drawXyzScreen() {
 
 void runXyz() {
   if (currentPage != XYZ_SCREEN) return;
-  // TODO: implement XYZ behavior here. Called on every loop while active.
+  // Buddy blackout module: the attack runs in its own FreeRTOS task, so the
+  // loop only supervises it and refreshes the on-screen status. Start/stop is
+  // driven by xyzBegin()/xyzEnd() from the navigation handlers.
+  xyzTick();
 }
 
 // -----------------------------------------------------------------------------
@@ -867,6 +871,8 @@ void openSelectedPage() {
   } else {
     currentPage = XYZ_SCREEN;
     drawXyzScreen();
+    // Starts the blackout attack task (calls ensure_wifi_mode()).
+    xyzBegin();
   }
 }
 
@@ -953,6 +959,8 @@ void handlePress(Direction direction) {
 
   if (currentPage == XYZ_SCREEN) {
     if (direction == LEFT) {
+      // Stop the attack before leaving the screen, so the radio goes idle.
+      xyzEnd();
       currentPage = MENU;
       drawMenu();
     }
