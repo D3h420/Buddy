@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #include "buddy_board.h"
 #include "buddy_display.h"
@@ -11,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "oled_display.h"
+#include "wifi_radar.h"
 
 extern "C" {
 #include "blackout.h"
@@ -88,7 +90,7 @@ ButtonState buttons[DIRECTION_COUNT] = {
 
 constexpr MenuItem MENU_ITEMS[] = {
     {"DISPLAY", "PIXEL + MOTION", ICON_DISPLAY},
-    {"BUTTONS", "INPUT MONITOR", ICON_INPUT},
+    {"RADAR", "WIFI DISTANCE", ICON_RADAR},
     {"SYSTEM", "DEVICE STATUS", ICON_SYSTEM},
     {"Lab Tester", "BLACKOUT MODE", ICON_LAB},
 };
@@ -106,6 +108,9 @@ bool inputReleaseGate = false;
 
 bool splashPromptBright = true;
 uint32_t splashPromptUpdatedAt = 0;
+uint32_t splashAnimationStartedAt = 0;
+int8_t splashGaze = 0;
+bool splashBlinking = false;
 uint32_t menuFocusUpdatedAt = 0;
 bool menuFocusBright = true;
 
@@ -113,9 +118,8 @@ int16_t scannerX = 20;
 int16_t previousScannerX = 20;
 uint32_t scannerUpdatedAt = 0;
 
-bool buttonTestSeen[DIRECTION_COUNT] = {false, false, false, false};
-uint32_t buttonTestBaseline[DIRECTION_COUNT] = {0, 0, 0, 0};
-uint8_t buttonHoldProgress[DIRECTION_COUNT] = {0, 0, 0, 0};
+wifi_radar_snapshot_t radarSnapshot = {};
+bool radarReady = false;
 
 uint32_t systemUpdatedAt = 0;
 uint32_t labDisplayGeneration = 0;
@@ -256,14 +260,6 @@ uint8_t seenButtonCount() {
   return count;
 }
 
-uint8_t buttonTestSeenCount() {
-  uint8_t count = 0;
-  for (bool seen : buttonTestSeen) {
-    if (seen) ++count;
-  }
-  return count;
-}
-
 uint16_t gray565(uint8_t level) {
   return static_cast<uint16_t>(((level & 0xF8) << 8) |
                                ((level & 0xFC) << 3) | (level >> 3));
@@ -273,30 +269,111 @@ uint16_t gray565(uint8_t level) {
 // Splash / attract screen.
 // -----------------------------------------------------------------------------
 
+void drawSplashEye(int16_t x, int8_t gaze, bool closed, uint16_t irisColor,
+                   bool leftEye) {
+  constexpr int16_t y = 104;
+  constexpr uint16_t skin = rgb565(255, 213, 208);
+  tft.fillRect(x, y, 49, 36, skin);
+
+  if (closed) {
+    tft.drawFastHLine(x + 5, y + 17, 39, COLOR_INK);
+    tft.drawFastHLine(x + 9, y + 18, 31, COLOR_SURFACE_2);
+    tft.drawFastHLine(x + 14, y + 21, 21, COLOR_MAGENTA);
+  } else {
+    fillChamferedRect(x + 2, y + 8, 45, 25, 6, COLOR_TEXT);
+    fillChamferedRect(x + 16 + gaze, y + 11, 17, 21, 5, irisColor);
+    fillChamferedRect(x + 20 + gaze, y + 13, 9, 16, 3, COLOR_SURFACE_2);
+    tft.fillRect(x + 22 + gaze, y + 16, 5, 11, COLOR_INK);
+    tft.fillRect(x + 20 + gaze, y + 14, 5, 5, COLOR_TEXT);
+    tft.fillRect(x + 28 + gaze, y + 23, 2, 3, COLOR_PINK);
+    tft.drawFastHLine(x + 7, y + 32, 35, COLOR_SURFACE_2);
+    tft.drawFastHLine(x + 5, y + 6, 39, COLOR_INK);
+    tft.drawFastHLine(x + 2, y + 9, 45, COLOR_INK);
+  }
+
+  // A tiny outer lash makes the eyes read as an anime face even when closed.
+  const int16_t lashX = leftEye ? x + 1 : x + 47;
+  tft.drawFastVLine(lashX, y + 6, 6, COLOR_INK);
+  tft.drawFastHLine(leftEye ? x : x + 46, y + 5, 3, COLOR_INK);
+}
+
+void drawSplashEyes() {
+  drawSplashEye(57, splashGaze, splashBlinking, COLOR_CYAN, true);
+  drawSplashEye(134, splashGaze, splashBlinking, COLOR_MAGENTA, false);
+}
+
 void drawSplashPrompt() {
-  fillChamferedRect(24, 211, 192, 22, 5, COLOR_INK);
-  drawChamferedRect(24, 211, 192, 22, 5,
+  fillChamferedRect(23, 213, 194, 21, 5, COLOR_INK);
+  drawChamferedRect(23, 213, 194, 21, 5,
                     splashPromptBright ? COLOR_MAGENTA : COLOR_MAGENTA_DARK);
-  drawCenteredText("PRESS ANY KEY TO START", 120, 218, 1,
+  drawCenteredText("PRESS ANY KEY TO START", 120, 219, 1,
                    splashPromptBright ? COLOR_TEXT : COLOR_MUTED);
 }
 
 void drawSplash() {
   tft.fillScreen(COLOR_BG);
   drawChamferedRect(3, 3, 234, 234, 8, COLOR_CYAN);
-  tft.drawFastHLine(12, 3, 55, COLOR_MAGENTA);
-  tft.drawFastVLine(3, 12, 42, COLOR_MAGENTA);
-  drawCenteredText("BUDDY", 121, 102, 3, COLOR_MAGENTA_DARK);
-  drawCenteredText("BUDDY", 120, 101, 3, COLOR_TEXT);
-  drawCenteredText("POCKET SYSTEM // 01", 120, 149, 1, COLOR_MUTED);
+  tft.drawFastHLine(12, 3, 48, COLOR_MAGENTA);
+  tft.drawFastVLine(3, 12, 35, COLOR_MAGENTA);
+  tft.drawFastHLine(180, 236, 48, COLOR_MAGENTA);
+  tft.drawFastVLine(236, 193, 35, COLOR_MAGENTA);
+  drawCenteredText("BUDDY // WAKE UP", 120, 12, 1, COLOR_PINK);
+
+  // A small manga-style portrait, drawn entirely with the display's native
+  // primitives so no bitmap or full-frame animation buffer is needed.
+  fillChamferedRect(33, 35, 174, 134, 29, COLOR_MAGENTA_DARK);
+  fillChamferedRect(38, 38, 164, 126, 24, COLOR_SURFACE_2);
+  fillChamferedRect(45, 55, 150, 114, 23, rgb565(255, 213, 208));
+  fillChamferedRect(39, 36, 162, 47, 17, COLOR_SURFACE_2);
+  fillChamferedRect(39, 72, 18, 75, 7, COLOR_SURFACE_2);
+  fillChamferedRect(183, 72, 18, 75, 7, COLOR_SURFACE_2);
+  fillChamferedRect(49, 68, 20, 30, 8, COLOR_SURFACE_2);
+  fillChamferedRect(103, 68, 33, 33, 9, COLOR_SURFACE_2);
+  fillChamferedRect(164, 68, 19, 29, 8, COLOR_SURFACE_2);
+  tft.drawFastHLine(65, 43, 85, COLOR_MAGENTA);
+  tft.drawFastHLine(73, 46, 53, COLOR_PINK);
+  tft.drawFastHLine(55, 85, 11, COLOR_MAGENTA);
+  tft.drawFastHLine(169, 85, 10, COLOR_CYAN);
+
+  tft.drawFastHLine(63, 99, 32, COLOR_SURFACE_2);
+  tft.drawFastHLine(143, 99, 32, COLOR_SURFACE_2);
+  splashGaze = 0;
+  splashBlinking = false;
+  drawSplashEyes();
+  tft.drawFastHLine(53, 143, 15, COLOR_PINK);
+  tft.drawFastHLine(172, 143, 15, COLOR_PINK);
+  tft.drawFastHLine(57, 146, 9, COLOR_MAGENTA);
+  tft.drawFastHLine(174, 146, 9, COLOR_MAGENTA);
+  tft.drawFastVLine(119, 142, 4, COLOR_MAGENTA_DARK);
+  tft.drawFastHLine(111, 154, 18, COLOR_MAGENTA_DARK);
+  tft.drawFastHLine(115, 157, 10, COLOR_MAGENTA_DARK);
+
+  tft.drawFastHLine(19, 82, 13, COLOR_CYAN);
+  tft.drawFastVLine(25, 76, 13, COLOR_CYAN);
+  tft.drawFastHLine(208, 91, 13, COLOR_MAGENTA);
+  tft.drawFastVLine(214, 85, 13, COLOR_MAGENTA);
+  drawCenteredText("BUDDY", 121, 177, 2, COLOR_MAGENTA_DARK);
+  drawCenteredText("BUDDY", 120, 176, 2, COLOR_TEXT);
+  drawCenteredText("YOUR POCKET COMPANION", 120, 199, 1, COLOR_MUTED);
   splashPromptBright = true;
   splashPromptUpdatedAt = millis();
+  splashAnimationStartedAt = splashPromptUpdatedAt;
   drawSplashPrompt();
 }
 
 void updateSplash() {
   if (currentPage != SPLASH) return;
   const uint32_t now = millis();
+  const uint32_t elapsed = now - splashAnimationStartedAt;
+  constexpr int8_t gazePattern[] = {0, 0, 4, 4, 0, -4, -4, 0};
+  const int8_t gaze = gazePattern[(elapsed / 750) % 8];
+  const uint32_t blinkPhase = elapsed % 4600;
+  const bool blinking = blinkPhase >= 3900 && blinkPhase < 4050;
+  if (gaze != splashGaze || blinking != splashBlinking) {
+    splashGaze = gaze;
+    splashBlinking = blinking;
+    drawSplashEyes();
+  }
   if (now - splashPromptUpdatedAt >= 560) {
     splashPromptUpdatedAt = now;
     splashPromptBright = !splashPromptBright;
@@ -315,14 +392,11 @@ void drawDisplayIcon(int16_t x, int16_t y, uint16_t color) {
   tft.drawFastHLine(x + 5, y + 18, 11, color);
 }
 
-void drawInputIcon(int16_t x, int16_t y, uint16_t color) {
-  tft.drawFastHLine(x + 6, y, 8, color);
-  tft.drawFastHLine(x + 6, y + 19, 8, color);
-  tft.drawFastVLine(x, y + 6, 8, color);
-  tft.drawFastVLine(x + 19, y + 6, 8, color);
-  tft.drawLine(x + 10, y + 3, x + 10, y + 15, color);
-  tft.drawLine(x + 4, y + 9, x + 16, y + 9, color);
-  tft.fillRect(x + 8, y + 7, 5, 5, color);
+void drawRadarIcon(int16_t x, int16_t y, uint16_t color) {
+  tft.drawCircle(x + 10, y + 10, 9, color);
+  tft.drawCircle(x + 10, y + 10, 5, color);
+  tft.drawLine(x + 10, y + 10, x + 16, y + 4, color);
+  tft.fillRect(x + 9, y + 9, 3, 3, color);
 }
 
 void drawSystemIcon(int16_t x, int16_t y, uint16_t color) {
@@ -349,8 +423,8 @@ void drawLabIcon(int16_t x, int16_t y, uint16_t color) {
 void drawMenuIcon(MenuIcon icon, int16_t x, int16_t y, uint16_t color) {
   if (icon == ICON_DISPLAY) {
     drawDisplayIcon(x, y, color);
-  } else if (icon == ICON_INPUT) {
-    drawInputIcon(x, y, color);
+  } else if (icon == ICON_RADAR) {
+    drawRadarIcon(x, y, color);
   } else if (icon == ICON_SYSTEM) {
     drawSystemIcon(x, y, color);
   } else {
@@ -560,115 +634,68 @@ void updateMotionTest() {
 }
 
 // -----------------------------------------------------------------------------
-// Input monitor.
+// Wi-Fi radar.
 // -----------------------------------------------------------------------------
 
-void getButtonCardBounds(Direction direction, int16_t &x, int16_t &y,
-                         int16_t &width, int16_t &height) {
-  width = (direction == LEFT || direction == RIGHT) ? 87 : 76;
-  height = 41;
-  if (direction == UP) {
-    x = 82;
-    y = 48;
-  } else if (direction == DOWN) {
-    x = 82;
-    y = 143;
-  } else if (direction == LEFT) {
-    x = 9;
-    y = 96;
+void drawRadarRows() {
+  for (uint8_t index = 0; index < WIFI_RADAR_MAX_ENTRIES; ++index) {
+    const int16_t y = 53 + index * 24;
+    fillChamferedRect(8, y, 224, 22, 5, COLOR_SURFACE);
+    drawChamferedRect(8, y, 224, 22, 5, COLOR_GRID);
+    if (index >= radarSnapshot.count) continue;
+
+    const wifi_radar_entry_t &ap = radarSnapshot.entries[index];
+    const uint16_t accent = ap.rssi >= -65 ? COLOR_CYAN : COLOR_MAGENTA;
+    tft.fillRect(13, y + 6, 3, 10, accent);
+    char ssid[14];
+    snprintf(ssid, sizeof(ssid), "%.12s", ap.ssid[0] ? ap.ssid : "<hidden>");
+    tft.setTextSize(1);
+    tft.setTextColor(COLOR_TEXT);
+    tft.setCursor(22, y + 7);
+    tft.print(ssid);
+
+    char rssi[12];
+    snprintf(rssi, sizeof(rssi), "%d", static_cast<int>(ap.rssi));
+    drawRightText(rssi, 144, y + 7, 1, COLOR_MUTED);
+
+    char distance[15];
+    if (ap.distance_m >= 1000.0f) {
+      snprintf(distance, sizeof(distance), ">999m");
+    } else {
+      snprintf(distance, sizeof(distance), "%.1fm", ap.distance_m);
+    }
+    drawRightText(distance, 222, y + 7, 1, accent);
+  }
+}
+
+void drawRadarStatus() {
+  tft.fillRect(0, 197, SCREEN_W, 16, COLOR_BG);
+  const char *status = nullptr;
+  if (!radarReady) {
+    status = "WIFI START FAILED";
+  } else if (radarSnapshot.scanning) {
+    status = "SCANNING 2.4 GHz...";
+  } else if (radarSnapshot.error) {
+    status = "SCAN FAILED - RIGHT RETRY";
+  } else if (radarSnapshot.count == 0) {
+    status = "NO 2.4 GHz NETWORKS";
   } else {
-    x = 144;
-    y = 96;
+    status = "AUTO RESCAN / 10 SEC";
   }
+  drawCenteredText(status, 120, 200, 1,
+                   radarSnapshot.error || !radarReady ? COLOR_MAGENTA
+                                                       : COLOR_MUTED);
 }
 
-void drawDirectionMark(Direction direction, int16_t centerX, int16_t centerY,
-                       uint16_t color) {
-  if (direction == UP) {
-    tft.drawLine(centerX - 4, centerY + 2, centerX, centerY - 2, color);
-    tft.drawLine(centerX, centerY - 2, centerX + 4, centerY + 2, color);
-  } else if (direction == DOWN) {
-    tft.drawLine(centerX - 4, centerY - 2, centerX, centerY + 2, color);
-    tft.drawLine(centerX, centerY + 2, centerX + 4, centerY - 2, color);
-  } else if (direction == LEFT) {
-    tft.drawLine(centerX + 2, centerY - 4, centerX - 2, centerY, color);
-    tft.drawLine(centerX - 2, centerY, centerX + 2, centerY + 4, color);
-  } else {
-    tft.drawLine(centerX - 2, centerY - 4, centerX + 2, centerY, color);
-    tft.drawLine(centerX + 2, centerY, centerX - 2, centerY + 4, color);
-  }
-}
-
-void drawButtonCard(Direction direction) {
-  int16_t x, y, width, height;
-  getButtonCardBounds(direction, x, y, width, height);
-  const ButtonState &button = buttons[direction];
-  const bool seen = buttonTestSeen[direction];
-  const bool recent = seen && button.stableState == LOW;
-  const uint32_t sessionPresses = button.presses - buttonTestBaseline[direction];
-  const uint16_t fill = recent ? COLOR_MAGENTA : COLOR_SURFACE;
-  const uint16_t border = recent ? COLOR_PINK : (seen ? COLOR_CYAN : COLOR_GRID);
-  const uint16_t primary = recent ? COLOR_INK : COLOR_TEXT;
-  const uint16_t secondary = recent ? COLOR_MAGENTA_DARK : COLOR_MUTED;
-
-  drawPanelShadow(x, y, width, height, 6);
-  fillChamferedRect(x, y, width, height, 6, fill);
-  drawChamferedRect(x, y, width, height, 6, border);
-  drawDirectionMark(direction, x + 13, y + 13, primary);
-
-  tft.setTextSize(1);
-  tft.setTextColor(primary);
-  tft.setCursor(x + 23, y + 8);
-  tft.print(button.name);
-  char count[18];
-  if (sessionPresses > 9999) {
-    snprintf(count, sizeof(count), "%s x9K+", button.pinName);
-  } else {
-    snprintf(count, sizeof(count), "%s x%lu", button.pinName,
-             static_cast<unsigned long>(sessionPresses));
-  }
-  tft.setTextColor(secondary);
-  tft.setCursor(x + 12, y + 25);
-  tft.print(count);
-
-  tft.fillRect(x + width - 10, y + 7, 4, 4,
-               seen ? (recent ? COLOR_INK : COLOR_CYAN) : COLOR_GRID);
-  buttonHoldProgress[direction] = 0;
-}
-
-void drawDpadCore() {
-  fillChamferedRect(101, 96, 38, 41, 7, COLOR_SURFACE_2);
-  drawChamferedRect(101, 96, 38, 41, 7, COLOR_GRID);
-  tft.drawLine(112, 116, 120, 107, COLOR_MAGENTA);
-  tft.drawLine(120, 107, 128, 116, COLOR_CYAN);
-  tft.drawLine(128, 116, 120, 125, COLOR_MAGENTA);
-  tft.drawLine(120, 125, 112, 116, COLOR_CYAN);
-  tft.fillRect(118, 114, 5, 5, COLOR_TEXT);
-}
-
-void drawButtonSummary() {
-  tft.fillRect(0, 189, SCREEN_W, 24, COLOR_BG);
-  char summary[28];
-  snprintf(summary, sizeof(summary), "SESSION INPUT  %u / 4",
-           buttonTestSeenCount());
-  const uint16_t color = buttonTestSeenCount() == 4 ? COLOR_CYAN : COLOR_MUTED;
-  drawCenteredText(summary, 120, 197, 1, color);
-  for (uint8_t index = 0; index < 4; ++index) {
-    tft.fillRect(99 + index * 11, 208, 7, 2,
-                 buttonTestSeen[index] ? COLOR_MAGENTA : COLOR_SURFACE_2);
-  }
-}
-
-void drawButtonTest() {
+void drawRadar() {
   tft.fillScreen(COLOR_BG);
-  drawHeader("BUTTONS", "LIVE INPUT MONITOR", "4-WAY");
-  drawButtonCard(UP);
-  drawButtonCard(LEFT);
-  drawDpadCore();
-  drawButtonCard(RIGHT);
-  drawButtonCard(DOWN);
-  drawButtonSummary();
-  drawFooter("<", "HOLD BACK", ">", "HOLD STATUS");
+  drawHeader("RADAR", "WIFI RANGE ESTIMATE", "2.4G");
+  drawCenteredText("SSID", 61, 43, 1, COLOR_MUTED);
+  drawCenteredText("dBm", 132, 43, 1, COLOR_MUTED);
+  drawCenteredText("METERS", 193, 43, 1, COLOR_MUTED);
+  drawRadarRows();
+  drawRadarStatus();
+  drawFooter("<", "BACK", ">", "RESCAN");
 }
 
 // -----------------------------------------------------------------------------
@@ -892,15 +919,38 @@ void updateLabTester() {
 // Navigation and input.
 // -----------------------------------------------------------------------------
 
-void startButtonTest() {
-  currentPage = BUTTON_TEST;
+void startRadar() {
+  currentPage = RADAR;
   navigationPending = false;
-  for (uint8_t index = 0; index < DIRECTION_COUNT; ++index) {
-    buttonTestSeen[index] = false;
-    buttonTestBaseline[index] = buttons[index].presses;
-    buttonHoldProgress[index] = 0;
+  radarSnapshot = {};
+  radarReady = wifi_radar_start();
+  if (radarReady) {
+    wifi_radar_copy_snapshot(&radarSnapshot, UINT32_MAX);
   }
-  drawButtonTest();
+  drawRadar();
+}
+
+void updateRadar() {
+  if (currentPage != RADAR || !radarReady) return;
+  wifi_radar_update();
+  wifi_radar_snapshot_t next;
+  if (!wifi_radar_copy_snapshot(&next, radarSnapshot.generation)) return;
+
+  bool rowsChanged = next.count != radarSnapshot.count;
+  if (!rowsChanged) {
+    for (uint8_t index = 0; index < next.count; ++index) {
+      const wifi_radar_entry_t &before = radarSnapshot.entries[index];
+      const wifi_radar_entry_t &after = next.entries[index];
+      if (before.rssi != after.rssi ||
+          std::strncmp(before.ssid, after.ssid, sizeof(before.ssid)) != 0) {
+        rowsChanged = true;
+        break;
+      }
+    }
+  }
+  radarSnapshot = next;
+  if (rowsChanged) drawRadarRows();
+  drawRadarStatus();
 }
 
 void openSelectedPage() {
@@ -909,7 +959,7 @@ void openSelectedPage() {
     displayStage = 0;
     drawDisplayTest();
   } else if (selectedItem == 1) {
-    startButtonTest();
+    startRadar();
   } else if (selectedItem == 2) {
     currentPage = SYSTEM_TEST;
     drawSystemTest();
@@ -980,10 +1030,19 @@ void handlePress(Direction direction) {
     return;
   }
 
-  if (currentPage == BUTTON_TEST) {
-    buttonTestSeen[direction] = true;
-    drawButtonCard(direction);
-    drawButtonSummary();
+  if (currentPage == RADAR) {
+    if (direction == LEFT) {
+      wifi_radar_stop();
+      currentPage = MENU;
+      drawMenu();
+    } else if (direction == RIGHT) {
+      if (radarReady) {
+        wifi_radar_rescan();
+      } else {
+        wifi_radar_stop();
+        radarReady = wifi_radar_start();
+      }
+    }
     return;
   }
 
@@ -1007,44 +1066,10 @@ void handlePress(Direction direction) {
   }
 }
 
-void handleRelease(Direction direction) {
-  if (currentPage == BUTTON_TEST && buttonTestSeen[direction]) {
-    drawButtonCard(direction);
-  }
-}
-
-void updateButtonTestHolds() {
-  if (currentPage != BUTTON_TEST || navigationPending) return;
-  const uint32_t now = millis();
-
-  constexpr Direction NAV_DIRECTIONS[] = {LEFT, RIGHT};
-  for (Direction direction : NAV_DIRECTIONS) {
-    ButtonState &button = buttons[direction];
-    if (!buttonTestSeen[direction] || button.stableState != LOW ||
-        button.holdHandled) continue;
-
-    const uint32_t elapsed = now - button.pressedAt;
-    const uint8_t progress = elapsed >= 650 ? 63 : elapsed * 63 / 650;
-    if (progress > buttonHoldProgress[direction]) {
-      int16_t x, y, width, height;
-      getButtonCardBounds(direction, x, y, width, height);
-      tft.fillRect(x + 12 + buttonHoldProgress[direction], y + 36,
-                   progress - buttonHoldProgress[direction], 2, COLOR_INK);
-      buttonHoldProgress[direction] = progress;
-    }
-    if (elapsed >= 650) {
-      button.holdHandled = true;
-      scheduleNavigation(direction == LEFT ? MENU : SYSTEM_TEST, 0);
-      return;
-    }
-  }
-}
-
 void pollButtons() {
   const uint32_t now = millis();
   const bool gateWasActive = inputReleaseGate;
   int8_t pressedIndex = -1;
-  bool released[DIRECTION_COUNT] = {false, false, false, false};
 
   for (uint8_t index = 0; index < DIRECTION_COUNT; ++index) {
     ButtonState &button = buttons[index];
@@ -1067,17 +1092,12 @@ void pollButtons() {
           button.pressedAt = now;
           button.holdHandled = true;
         }
-      } else {
-        released[index] = true;
       }
     }
   }
 
   // Dispatch only after all electrical states are settled so a handler cannot
   // change currentPage halfway through scanning the remaining pins.
-  for (uint8_t index = 0; index < DIRECTION_COUNT; ++index) {
-    if (released[index]) handleRelease(static_cast<Direction>(index));
-  }
   if (gateWasActive) {
     bool allReleased = true;
     for (const ButtonState &button : buttons) {
@@ -1142,20 +1162,15 @@ void setup() {
   ESP_LOGI(TAG, "Controls: UP/DOWN select, RIGHT enter, LEFT back");
   ESP_LOGI(TAG, "Buzzer: disabled / D9 untouched");
 
-  // Automatically start XYZ screen on boot instead of showing splash
-  ESP_LOGI(TAG, "Setting current page to XYZ_SCREEN");
-  currentPage = XYZ_SCREEN;
-  ESP_LOGI(TAG, "Drawing XYZ screen");
-  drawXyzScreen();
-  ESP_LOGI(TAG, "Calling xyzBegin");
-  xyzBegin();
-  ESP_LOGI(TAG, "xyzBegin called successfully");
+  currentPage = SPLASH;
+  drawSplash();
+  armStartInput();
   ESP_ERROR_CHECK(gpio_set_level(static_cast<gpio_num_t>(TFT_BL), 1));
 }
 
 void loop() {
   pollButtons();
-  updateButtonTestHolds();
+  updateRadar();
   updateLabTester();
   updatePendingNavigation();
   updateSplash();

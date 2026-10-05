@@ -4,8 +4,8 @@
 
 Buddy is a small device built around a Seeed Studio XIAO ESP32-C5, a 240 × 240
 ST7789 display, and four directional buttons. The firmware is a native ESP-IDF
-project without Arduino. It includes a **BUDDY** splash screen, a menu, three
-display tests, a button monitor, system status, and Lab Tester.
+project without Arduino. It includes an animated **BUDDY** splash screen, a
+menu, three display tests, a Wi-Fi radar, system status, and Lab Tester.
 
 ## Wiring
 
@@ -45,15 +45,18 @@ GPIO9 / D9 remains free; no buzzer is connected.
 | Splash | Open menu | Open menu | Open menu |
 | Menu | Change selection | — | Open selection |
 | Display | — | Return to menu | Next test |
-| Buttons | Test press | Test press; hold for 650 ms to return | Test press; hold for 650 ms to open status |
+| Radar | — | Return to menu | Rescan now |
 | System | — | Return to menu | Refresh status |
 | Lab Tester | — | Hold for 650 ms to stop and return to menu | — |
 | Refresh | — | Cancel | — |
 
-Button presses are debounced for 30 ms. The `RIGHT` press used to open the button
-monitor is not counted in the new session. Status refresh checks the display
-configuration, button states, and font. The SPI connection has no MISO line, so
-the status screen does not electrically test the display.
+Button presses are debounced for 30 ms. Radar scans 2.4 GHz networks in the
+background every 10 seconds and shows up to six networks, sorted by estimated
+distance. It uses the RSSI-to-meters formula from
+[WiFiRadar](https://github.com/D3h420/WiFiRadar); the range is an estimate,
+not a calibrated measurement. Status refresh checks the display configuration,
+button states, and font. The SPI connection has no MISO line, so the status
+screen does not electrically test the display.
 
 ## Build and flash
 
