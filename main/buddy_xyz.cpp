@@ -113,10 +113,16 @@ esp_err_t wifi_bring_up() {
   if (wifi_initialised) return ESP_OK;
 
   ESP_ERROR_CHECK(esp_netif_init());
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
+  
+  // Try to create the default event loop, but ignore if it already exists
+  esp_err_t err = esp_event_loop_create_default();
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    ESP_LOGE(TAG, "Failed to create default event loop: %s", esp_err_to_name(err));
+    return err;
+  }
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  esp_err_t err = esp_wifi_init(&cfg);
+  err = esp_wifi_init(&cfg);
   if (err != ESP_OK) return err;
 
   // Same mode the original settles on when the radio is not in AP mode.
