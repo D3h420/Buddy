@@ -5,12 +5,17 @@
 #include "buddy_board.h"
 #include "buddy_display.h"
 #include "buddy_types.h"
-#include "buddy_xyz.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "oled_display.h"
+
+extern "C" {
+#include "blackout.h"
+void blackout_shared_release(void);
+}
 
 namespace {
 constexpr const char *TAG = "Buddy";
@@ -85,7 +90,7 @@ constexpr MenuItem MENU_ITEMS[] = {
     {"DISPLAY", "PIXEL + MOTION", ICON_DISPLAY},
     {"BUTTONS", "INPUT MONITOR", ICON_INPUT},
     {"SYSTEM", "DEVICE STATUS", ICON_SYSTEM},
-    {"XYZ", "CUSTOM MODE", ICON_XYZ},
+    {"Lab Tester", "BLACKOUT MODE", ICON_LAB},
 };
 constexpr uint8_t MENU_ITEM_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 
@@ -113,6 +118,7 @@ uint32_t buttonTestBaseline[DIRECTION_COUNT] = {0, 0, 0, 0};
 uint8_t buttonHoldProgress[DIRECTION_COUNT] = {0, 0, 0, 0};
 
 uint32_t systemUpdatedAt = 0;
+uint32_t labDisplayGeneration = 0;
 uint32_t selfTestStartedAt = 0;
 uint8_t selfTestStep = 0;
 uint16_t selfTestProgressDrawn = 0;
@@ -331,10 +337,13 @@ void drawSystemIcon(int16_t x, int16_t y, uint16_t color) {
   }
 }
 
-void drawXyzIcon(int16_t x, int16_t y, uint16_t color) {
-  tft.drawRect(x, y, 20, 20, color);
-  tft.drawLine(x + 5, y + 5, x + 14, y + 14, color);
-  tft.drawLine(x + 14, y + 5, x + 5, y + 14, color);
+void drawLabIcon(int16_t x, int16_t y, uint16_t color) {
+  tft.drawFastHLine(x + 6, y + 1, 8, color);
+  tft.drawFastVLine(x + 8, y + 2, 9, color);
+  tft.drawFastVLine(x + 11, y + 2, 9, color);
+  tft.drawLine(x + 8, y + 10, x + 3, y + 18, color);
+  tft.drawLine(x + 11, y + 10, x + 16, y + 18, color);
+  tft.drawFastHLine(x + 3, y + 18, 14, color);
 }
 
 void drawMenuIcon(MenuIcon icon, int16_t x, int16_t y, uint16_t color) {
@@ -345,7 +354,7 @@ void drawMenuIcon(MenuIcon icon, int16_t x, int16_t y, uint16_t color) {
   } else if (icon == ICON_SYSTEM) {
     drawSystemIcon(x, y, color);
   } else {
-    drawXyzIcon(x, y, color);
+    drawLabIcon(x, y, color);
   }
 }
 
@@ -821,26 +830,62 @@ void updateSystemUptime() {
   drawSystemUptimeValue();
 }
 
-// -----------------------------------------------------------------------------
-// XYZ module.
-// -----------------------------------------------------------------------------
-
-void drawXyzScreen() {
+void drawLabTesterScreen() {
   tft.fillScreen(COLOR_BG);
-  drawHeader("XYZ", "CUSTOM MODE", "LIVE");
+  drawHeader("Lab Tester", "BLACKOUT MODE", "LIVE");
   fillChamferedRect(20, 69, 200, 126, 8, COLOR_SURFACE);
   drawChamferedRect(20, 69, 200, 126, 8, COLOR_GRID);
   drawCenteredText("ACTIVE", 120, 110, 3, COLOR_CYAN);
-  drawCenteredText("XYZ MODULE", 120, 157, 1, COLOR_MUTED);
-  drawFooter("<", "BACK", "", "");
+  drawCenteredText("BLACKOUT MODULE", 120, 157, 1, COLOR_MUTED);
+  drawFooter("<", "HOLD BACK", "", "");
 }
 
-void runXyz() {
-  if (currentPage != XYZ_SCREEN) return;
-  // Buddy blackout module: the attack runs in its own FreeRTOS task, so the
-  // loop only supervises it and refreshes the on-screen status. Start/stop is
-  // driven by xyzBegin()/xyzEnd() from the navigation handlers.
-  xyzTick();
+void drawLabTesterStatus(const oled_display_snapshot_t &snapshot) {
+  fillChamferedRect(20, 69, 200, 126, 8, COLOR_SURFACE);
+  drawChamferedRect(20, 69, 200, 126, 8, COLOR_GRID);
+  for (uint8_t index = 0; index < OLED_DISPLAY_LINE_COUNT; ++index) {
+    char visible[31];
+    snprintf(visible, sizeof(visible), "%.30s", snapshot.lines[index]);
+    drawCenteredText(visible, 120, 78 + index * 28, 1,
+                     index == 0 ? COLOR_CYAN : COLOR_TEXT);
+  }
+}
+
+void startLabTester() {
+  oled_display_reset();
+  labDisplayGeneration = 0;
+  currentPage = LAB_TESTER;
+  drawLabTesterScreen();
+  if (cmd_start_blackout(0, nullptr) != 0) {
+    ESP_LOGE(TAG, "Lab Tester failed to start");
+    blackout_shared_release();
+    currentPage = MENU;
+    drawMenu();
+  }
+}
+
+void updateLabTester() {
+  if (currentPage != LAB_TESTER) return;
+
+  ButtonState &left = buttons[LEFT];
+  if (left.stableState == LOW && !left.holdHandled &&
+      millis() - left.pressedAt >= 650) {
+    left.holdHandled = true;
+    blackout_stop();
+    blackout_shared_release();
+    currentPage = MENU;
+    drawMenu();
+  } else if (!blackout_attack_is_running()) {
+    blackout_shared_release();
+    currentPage = MENU;
+    drawMenu();
+  } else {
+    oled_display_snapshot_t snapshot;
+    if (oled_display_copy_snapshot(&snapshot, labDisplayGeneration)) {
+      labDisplayGeneration = snapshot.generation;
+      drawLabTesterStatus(snapshot);
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -868,11 +913,8 @@ void openSelectedPage() {
   } else if (selectedItem == 2) {
     currentPage = SYSTEM_TEST;
     drawSystemTest();
-  } else {
-    currentPage = XYZ_SCREEN;
-    drawXyzScreen();
-    // Starts the blackout attack task (calls ensure_wifi_mode()).
-    xyzBegin();
+  } else if (selectedItem == 3) {
+    startLabTester();
   }
 }
 
@@ -957,15 +999,7 @@ void handlePress(Direction direction) {
     return;
   }
 
-  if (currentPage == XYZ_SCREEN) {
-    if (direction == LEFT) {
-      // Stop the attack before leaving the screen, so the radio goes idle.
-      xyzEnd();
-      currentPage = MENU;
-      drawMenu();
-    }
-    return;
-  }
+  if (currentPage == LAB_TESTER) return;
 
   if (currentPage == SELF_TEST && direction == LEFT) {
     currentPage = SYSTEM_TEST;
@@ -1117,13 +1151,13 @@ void setup() {
 void loop() {
   pollButtons();
   updateButtonTestHolds();
+  updateLabTester();
   updatePendingNavigation();
   updateSplash();
   updateMenuFocus();
   updateMotionTest();
   updateSystemUptime();
   updateSelfTest();
-  runXyz();
   delay(2);
 }
 
