@@ -6,6 +6,7 @@
 #include "buddy_board.h"
 #include "buddy_display.h"
 #include "buddy_types.h"
+#include "ble_scan.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -93,6 +94,7 @@ constexpr MenuItem MENU_ITEMS[] = {
     {"RADAR", "WIFI DISTANCE", ICON_RADAR},
     {"SYSTEM", "DEVICE STATUS", ICON_SYSTEM},
     {"Lab Tester", "BLACKOUT MODE", ICON_LAB},
+    {"BLE Scan", "DEVICE TYPES", ICON_BLE},
 };
 constexpr uint8_t MENU_ITEM_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 
@@ -120,6 +122,9 @@ uint32_t scannerUpdatedAt = 0;
 
 wifi_radar_snapshot_t radarSnapshot = {};
 bool radarReady = false;
+buddy_ble_snapshot_t bleSnapshot = {};
+bool bleReady = false;
+uint32_t bleUpdatedAt = 0;
 
 uint32_t systemUpdatedAt = 0;
 uint32_t labDisplayGeneration = 0;
@@ -420,6 +425,14 @@ void drawLabIcon(int16_t x, int16_t y, uint16_t color) {
   tft.drawFastHLine(x + 3, y + 18, 14, color);
 }
 
+void drawBleIcon(int16_t x, int16_t y, uint16_t color) {
+  tft.drawFastVLine(x + 10, y + 1, 18, color);
+  tft.drawLine(x + 10, y + 1, x + 16, y + 6, color);
+  tft.drawLine(x + 16, y + 6, x + 5, y + 15, color);
+  tft.drawLine(x + 5, y + 5, x + 16, y + 14, color);
+  tft.drawLine(x + 16, y + 14, x + 10, y + 19, color);
+}
+
 void drawMenuIcon(MenuIcon icon, int16_t x, int16_t y, uint16_t color) {
   if (icon == ICON_DISPLAY) {
     drawDisplayIcon(x, y, color);
@@ -427,16 +440,18 @@ void drawMenuIcon(MenuIcon icon, int16_t x, int16_t y, uint16_t color) {
     drawRadarIcon(x, y, color);
   } else if (icon == ICON_SYSTEM) {
     drawSystemIcon(x, y, color);
-  } else {
+  } else if (icon == ICON_LAB) {
     drawLabIcon(x, y, color);
+  } else {
+    drawBleIcon(x, y, color);
   }
 }
 
 void drawMenuCard(uint8_t index) {
   const int16_t x = 10;
-  const int16_t y = 43 + index * 41;
+  const int16_t y = 43 + index * 33;
   const int16_t width = 220;
-  const int16_t height = 39;
+  const int16_t height = 31;
   const bool selected = index == selectedItem;
   const uint16_t fill = selected ? COLOR_MAGENTA : COLOR_SURFACE;
   const uint16_t border = selected ? COLOR_PINK : COLOR_GRID;
@@ -449,21 +464,21 @@ void drawMenuCard(uint8_t index) {
 
   char ordinal[4];
   snprintf(ordinal, sizeof(ordinal), "%02u", index + 1);
-  drawCenteredText(ordinal, 25, y + 16, 1, secondary);
-  drawMenuIcon(MENU_ITEMS[index].icon, 40, y + 9, primary);
+  drawCenteredText(ordinal, 25, y + 12, 1, secondary);
+  drawMenuIcon(MENU_ITEMS[index].icon, 40, y + 5, primary);
 
   tft.setTextSize(2);
   tft.setTextColor(primary);
-  tft.setCursor(68, y + 3);
+  tft.setCursor(68, y + 1);
   tft.print(MENU_ITEMS[index].title);
   tft.setTextSize(1);
   tft.setTextColor(secondary);
-  tft.setCursor(69, y + 23);
+  tft.setCursor(69, y + 20);
   tft.print(MENU_ITEMS[index].subtitle);
 
-  tft.drawLine(214, y + 14, 220, y + 18, primary);
-  tft.drawLine(220, y + 18, 214, y + 22, primary);
-  if (selected) tft.fillRect(224, y + 6, 2, 27, COLOR_PINK);
+  tft.drawLine(214, y + 10, 220, y + 15, primary);
+  tft.drawLine(220, y + 15, 214, y + 20, primary);
+  if (selected) tft.fillRect(224, y + 5, 2, 21, COLOR_PINK);
 }
 
 void drawMenuStatus() {
@@ -490,10 +505,10 @@ void updateMenuFocus() {
   if (currentPage != MENU || millis() - menuFocusUpdatedAt < 420) return;
   menuFocusUpdatedAt = millis();
   menuFocusBright = !menuFocusBright;
-  const int16_t y = 43 + selectedItem * 41;
+  const int16_t y = 43 + selectedItem * 33;
   const uint16_t color = menuFocusBright ? COLOR_INK : COLOR_PINK;
-  tft.drawLine(214, y + 14, 220, y + 18, color);
-  tft.drawLine(220, y + 18, 214, y + 22, color);
+  tft.drawLine(214, y + 10, 220, y + 15, color);
+  tft.drawLine(220, y + 15, 214, y + 20, color);
 }
 
 // -----------------------------------------------------------------------------
@@ -696,6 +711,104 @@ void drawRadar() {
   drawRadarRows();
   drawRadarStatus();
   drawFooter("<", "BACK", ">", "RESCAN");
+}
+
+// The counts are deliberately labelled as observed BLE signals. Appearance and
+// names can identify some device types, but many advertisements expose neither.
+constexpr int16_t BLE_TILE_X[6] = {8, 124, 8, 124, 8, 124};
+constexpr int16_t BLE_TILE_Y[6] = {61, 61, 112, 112, 163, 163};
+constexpr uint16_t BLE_TILE_COLOR[6] = {
+    COLOR_CYAN, COLOR_MAGENTA, COLOR_PINK,
+    COLOR_TEXT, COLOR_MUTED, COLOR_CYAN};
+constexpr const char *BLE_TILE_LABEL[6] = {
+    "PHONES", "AUDIO", "WEARABLE", "COMPUTER", "OTHER", "SEEN"};
+
+void drawBleTileIcon(uint8_t index, int16_t x, int16_t y, uint16_t color) {
+  if (index == 0) {
+    tft.drawRect(x + 4, y, 12, 20, color);
+    tft.drawFastHLine(x + 7, y + 3, 6, color);
+    tft.fillRect(x + 9, y + 17, 2, 2, color);
+  } else if (index == 1) {
+    tft.drawFastHLine(x + 5, y + 2, 10, color);
+    tft.drawFastVLine(x + 3, y + 5, 10, color);
+    tft.drawFastVLine(x + 17, y + 5, 10, color);
+    tft.fillRect(x + 1, y + 12, 5, 7, color);
+    tft.fillRect(x + 15, y + 12, 5, 7, color);
+  } else if (index == 2) {
+    tft.fillRect(x + 8, y, 5, 4, color);
+    tft.drawRect(x + 3, y + 4, 15, 13, color);
+    tft.fillRect(x + 8, y + 17, 5, 4, color);
+  } else if (index == 3) {
+    tft.drawRect(x + 1, y + 2, 19, 14, color);
+    tft.drawFastHLine(x, y + 18, 21, color);
+    tft.drawFastHLine(x + 5, y + 20, 11, color);
+  } else if (index == 4) {
+    drawCenteredText("?", x + 10, y + 2, 2, color);
+  } else {
+    tft.drawCircle(x + 10, y + 10, 8, color);
+    tft.drawFastHLine(x + 7, y + 10, 7, color);
+    tft.drawFastVLine(x + 10, y + 7, 7, color);
+  }
+}
+
+void drawBleTile(uint8_t index) {
+  const int16_t x = BLE_TILE_X[index];
+  const int16_t y = BLE_TILE_Y[index];
+  fillChamferedRect(x, y, 108, 44, 5, COLOR_SURFACE);
+  drawChamferedRect(x, y, 108, 44, 5, COLOR_GRID);
+  drawBleTileIcon(index, x + 8, y + 12, BLE_TILE_COLOR[index]);
+  tft.setTextSize(1);
+  tft.setTextColor(COLOR_MUTED);
+  tft.setCursor(x + 36, y + 7);
+  tft.print(BLE_TILE_LABEL[index]);
+}
+
+uint16_t bleTileValue(const buddy_ble_snapshot_t &snapshot, uint8_t index) {
+  if (index == 0) return snapshot.phones;
+  if (index == 1) return snapshot.audio;
+  if (index == 2) return snapshot.wearables;
+  if (index == 3) return snapshot.computers;
+  if (index == 4) return snapshot.other;
+  return snapshot.total;
+}
+
+void drawBleTileCount(uint8_t index) {
+  const int16_t x = BLE_TILE_X[index];
+  const int16_t y = BLE_TILE_Y[index];
+  tft.fillRect(x + 36, y + 20, 65, 18, COLOR_SURFACE);
+  char value[12];
+  snprintf(value, sizeof(value), "%u%s", bleTileValue(bleSnapshot, index),
+           index == 5 && bleSnapshot.truncated ? "+" : "");
+  drawRightText(value, x + 99, y + 20, 2, BLE_TILE_COLOR[index]);
+}
+
+void drawBleStatus() {
+  tft.fillRect(0, 42, SCREEN_W, 17, COLOR_BG);
+  char status[40];
+  if (!bleReady) {
+    snprintf(status, sizeof(status), "BLE START FAILED");
+  } else if (bleSnapshot.state == BUDDY_BLE_SCANNING) {
+    snprintf(status, sizeof(status), "OBSERVING  %u SEC LEFT",
+             bleSnapshot.seconds_remaining);
+  } else if (bleSnapshot.state == BUDDY_BLE_ERROR) {
+    snprintf(status, sizeof(status), "BLE SCAN ERROR");
+  } else {
+    snprintf(status, sizeof(status), "STARTING BLE SCAN...");
+  }
+  drawCenteredText(status, 120, 47, 1,
+                   !bleReady || bleSnapshot.state == BUDDY_BLE_ERROR
+                       ? COLOR_MAGENTA : COLOR_MUTED);
+}
+
+void drawBleScan() {
+  tft.fillScreen(COLOR_BG);
+  drawHeader("BLE SCAN", "EST. DEVICE TYPES", "LIVE");
+  drawBleStatus();
+  for (uint8_t index = 0; index < 6; ++index) {
+    drawBleTile(index);
+    drawBleTileCount(index);
+  }
+  drawFooter("<", "BACK", "", "10S WINDOW");
 }
 
 // -----------------------------------------------------------------------------
@@ -953,6 +1066,41 @@ void updateRadar() {
   drawRadarStatus();
 }
 
+void startBleScan() {
+  currentPage = BLE_SCAN;
+  navigationPending = false;
+  bleSnapshot = {};
+  bleReady = buddy_ble_start();
+  if (bleReady) {
+    buddy_ble_copy_snapshot(&bleSnapshot, UINT32_MAX);
+  }
+  bleUpdatedAt = millis();
+  drawBleScan();
+}
+
+void updateBleScan() {
+  if (currentPage != BLE_SCAN || !bleReady) return;
+  buddy_ble_update();
+  const uint32_t now = millis();
+  if (now - bleUpdatedAt < 250) return;
+  bleUpdatedAt = now;
+
+  buddy_ble_snapshot_t next;
+  if (!buddy_ble_copy_snapshot(&next, bleSnapshot.generation)) return;
+  const buddy_ble_snapshot_t previous = bleSnapshot;
+  bleSnapshot = next;
+  for (uint8_t index = 0; index < 6; ++index) {
+    if (bleTileValue(previous, index) != bleTileValue(bleSnapshot, index) ||
+        (index == 5 && previous.truncated != bleSnapshot.truncated)) {
+      drawBleTileCount(index);
+    }
+  }
+  if (previous.state != bleSnapshot.state ||
+      previous.seconds_remaining != bleSnapshot.seconds_remaining) {
+    drawBleStatus();
+  }
+}
+
 void openSelectedPage() {
   if (selectedItem == 0) {
     currentPage = DISPLAY_TEST;
@@ -965,6 +1113,8 @@ void openSelectedPage() {
     drawSystemTest();
   } else if (selectedItem == 3) {
     startLabTester();
+  } else if (selectedItem == 4) {
+    startBleScan();
   }
 }
 
@@ -1042,6 +1192,15 @@ void handlePress(Direction direction) {
         wifi_radar_stop();
         radarReady = wifi_radar_start();
       }
+    }
+    return;
+  }
+
+  if (currentPage == BLE_SCAN) {
+    if (direction == LEFT) {
+      buddy_ble_stop();
+      currentPage = MENU;
+      drawMenu();
     }
     return;
   }
@@ -1171,6 +1330,7 @@ void setup() {
 void loop() {
   pollButtons();
   updateRadar();
+  updateBleScan();
   updateLabTester();
   updatePendingNavigation();
   updateSplash();

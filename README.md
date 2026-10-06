@@ -5,7 +5,7 @@
 Buddy is a small device built around a Seeed Studio XIAO ESP32-C5, a 240 × 240
 ST7789 display, and four directional buttons. The firmware is a native ESP-IDF
 project without Arduino. It includes an animated **BUDDY** splash screen, a
-menu, three display tests, a Wi-Fi radar, system status, and Lab Tester.
+menu, three display tests, a Wi-Fi radar, BLE Scan, system status, and Lab Tester.
 
 ## Wiring
 
@@ -48,6 +48,7 @@ GPIO9 / D9 remains free; no buzzer is connected.
 | Radar | — | Return to menu | Rescan now |
 | System | — | Return to menu | Refresh status |
 | Lab Tester | — | Hold for 650 ms to stop and return to menu | — |
+| BLE Scan | — | Return to menu | — |
 | Refresh | — | Cancel | — |
 
 Button presses are debounced for 30 ms. Radar scans 2.4 GHz networks in the
@@ -58,6 +59,14 @@ not a calibrated measurement. Status refresh checks the display configuration,
 button states, and font. The SPI connection has no MISO line, so the status
 screen does not electrically test the display.
 
+BLE Scan observes advertising packets in repeating 10-second windows. Its icon
+counts group signals as phones, audio, wearables, computers, or other using
+advertised device information, especially the Bluetooth Appearance value. A
+device with no reliable type stays in **OTHER**. The totals are observed BLE
+advertisers, not a verified count of physical devices: some devices do not
+advertise their type and private addresses can change. BLE Scan does not pair
+with or connect to nearby devices.
+
 ## Build and flash
 
 The project builds with **ESP-IDF 5.5.3** for the `esp32c5` target:
@@ -67,6 +76,9 @@ The project builds with **ESP-IDF 5.5.3** for the `esp32c5` target:
 idf.py -DIDF_TARGET=esp32c5 build
 idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
+
+NimBLE is configured for the observer role. The 2 MB flash uses ESP-IDF's
+1,500 KB single-app partition so the BLE-enabled firmware fits.
 
 Choose the port for the connected board. `sdkconfig.defaults` routes the
 console to USB Serial/JTAG so UART does not occupy GPIO11 and GPIO12. The built
